@@ -6,9 +6,14 @@ from pydantic import BaseModel
 from agente import chatear, obtener_historial
 
 app = FastAPI(
-    title="Agente de Registro de Incidentes",
-    description="API con memoria persistente en Redis para gestión de incidentes",
-    version="1.0.0"
+    title="Agente Recomendador de Películas",
+    version="1.0.0",
+    servers=[
+        {
+            "url": "https://bitacora-0zap.onrender.com/",
+            "description": "Producción"
+        }
+    ]
 )
 
 app.add_middleware(
