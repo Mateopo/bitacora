@@ -1,5 +1,8 @@
+%%writefile agente_peliculas/agente.py
 
 import os
+import httpx
+import datetime
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
@@ -7,52 +10,37 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 modelo = ChatGroq(
     model="llama-3.3-70b-versatile",
-    temperature=0.3,   # más bajo para respuestas más precisas y consistentes
+    temperature=0.3,
     max_tokens=512
 )
+
+WEBHOOK_N8N = "hhttps://mpacheco.app.n8n.cloud/webhook/buscar-película"
 
 template = ChatPromptTemplate.from_messages([
     ("system", """Eres un asistente de registro de incidentes técnicos.
 
-Tu única función es interpretar lo que escribe el usuario y extraer:
-- El número de caso
-- El cliente según el prefijo del caso
-- La descripción del incidente
-- La solución aplicada (si la menciona)
+Cuando el usuario escriba un incidente, extrae los datos y guárdalos 
+INMEDIATAMENTE sin pedir confirmación.
 
 REGLAS DE DETECCIÓN DE CLIENTE POR PREFIJO:
 - Si el caso empieza con "IR" → Cliente: Colmedica
 
 CÓMO DETECTAR LA SOLUCIÓN:
-El usuario puede escribirla de distintas formas:
-- "IR2313123 - apolo falla - solución: depuré las sesiones"
-- "IR2313123 - apolo falla | fix: reinicié el servicio"
-- "IR2313123 - apolo falla - se resolvió borrando caché"
+Palabras clave: "solución:", "fix:", "se resolvió", "se depuró",
+"se reinició", "se arregló", "corrección:", "resolved:"
+Si no hay solución mencionada, usa "Pendiente".
 
-Palabras clave que indican solución: "solución:", "fix:", "se resolvió",
-"se solucionó", "se arregló", "corrección:", "resolved:", "se depuró"
+INSTRUCCIÓN CRÍTICA:
+Cuando recibas un incidente responde ÚNICAMENTE con esta línea exacta,
+sin texto adicional, sin explicaciones, sin emojis:
+GUARDADO:Cliente=VALOR|Caso=VALOR|Descripción=VALOR|Solución=VALOR
 
-Si no hay solución mencionada, deja ese campo como "Pendiente".
+Ejemplo:
+Usuario escribe: IR12345 - apolo falla - se depuran sesiones
+Tu respuesta: GUARDADO:Cliente=Colmedica|Caso=IR12345|Descripción=apolo falla|Solución=se depuran sesiones
 
-FLUJO:
-1. El usuario escribe el incidente
-2. Tú respondes SIEMPRE con este formato exacto:
-
-✅ Caso registrado:
-- Cliente: Colmedica
-- Caso: IR2313123
-- Descripción: apolo falla
-- Solución: Pendiente
-
-¿Los datos son correctos? Responde SÍ para confirmar o corrígeme.
-
-3. Si el usuario confirma con "sí", "si", "correcto", "ok" o similar, respondes
-   EXACTAMENTE con esta línea (sin cambiar nada):
-   GUARDADO:Cliente=Colmedica|Caso=IR2313123|Descripción=apolo falla|Solución=Pendiente
-
-4. Si el usuario corrige algo, actualizas los datos y vuelves a mostrar el resumen.
-
-Responde siempre en español, breve y claro."""),
+Usuario escribe: IR99887 - error en login
+Tu respuesta: GUARDADO:Cliente=Colmedica|Caso=IR99887|Descripción=error en login|Solución=Pendiente"""),
     MessagesPlaceholder(variable_name="historial"),
     ("human", "{mensaje}")
 ])
@@ -67,10 +55,6 @@ def obtener_historial(session_id: str) -> RedisChatMessageHistory:
         ttl=3600
     )
 
-
-import httpx  # agregar este import arriba
-
-WEBHOOK_N8N = "https://mpacheco.app.n8n.cloud/webhook/buscar-película"
 
 def chatear(session_id: str, mensaje: str) -> dict:
     historial_redis = obtener_historial(session_id)
@@ -96,10 +80,10 @@ def chatear(session_id: str, mensaje: str) -> dict:
                 clave, valor = parte.split("=", 1)
                 datos_guardado[clave.strip()] = valor.strip()
 
-        # ── Llamar a n8n directamente desde la API ──────────
+        # Llamar a n8n directamente desde la API
         try:
             payload = {
-                "fecha":       __import__('datetime').datetime.now().strftime("%d/%m/%Y, %I:%M:%S %p"),
+                "fecha":       datetime.datetime.now().strftime("%d/%m/%Y, %I:%M:%S %p"),
                 "session_id":  session_id,
                 "cliente":     datos_guardado.get("Cliente",     "No detectado"),
                 "caso":        datos_guardado.get("Caso",        "No detectado"),
@@ -108,10 +92,21 @@ def chatear(session_id: str, mensaje: str) -> dict:
             }
             httpx.post(WEBHOOK_N8N, json=payload, timeout=10)
         except Exception:
-            pass  # Si n8n falla, no interrumpe la respuesta al usuario
+            pass
+
+    # Respuesta amigable al usuario cuando se guarda
+    respuesta_usuario = respuesta
+    if guardado:
+        respuesta_usuario = (
+            f"✅ Incidente registrado correctamente:\n"
+            f"- Cliente: {datos_guardado.get('Cliente', '—')}\n"
+            f"- Caso: {datos_guardado.get('Caso', '—')}\n"
+            f"- Descripción: {datos_guardado.get('Descripción', '—')}\n"
+            f"- Solución: {datos_guardado.get('Solución', '—')}"
+        )
 
     return {
-        "respuesta":           respuesta,
+        "respuesta":           respuesta_usuario,
         "session_id":          session_id,
         "mensajes_en_memoria": len(historial_redis.messages),
         "guardado":            guardado,
