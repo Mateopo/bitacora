@@ -1,4 +1,3 @@
-
 import os
 import httpx
 import datetime
@@ -10,15 +9,15 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 modelo = ChatGroq(
     model="llama-3.3-70b-versatile",
     temperature=0.3,
-    max_tokens=512
+    max_tokens=768
 )
 
-WEBHOOK_N8N = "hhttps://mpacheco.app.n8n.cloud/webhook/buscar-película"
+WEBHOOK_N8N = "https://mpacheco.app.n8n.cloud/webhook/buscar-película"
 
 template = ChatPromptTemplate.from_messages([
     ("system", """Eres un asistente de registro de incidentes técnicos.
 
-Cuando el usuario escriba un incidente, extrae los datos y guárdalos 
+Cuando el usuario escriba un incidente, extrae los datos y guárdalos
 INMEDIATAMENTE sin pedir confirmación.
 
 REGLAS DE DETECCIÓN DE CLIENTE POR PREFIJO:
@@ -79,7 +78,6 @@ def chatear(session_id: str, mensaje: str) -> dict:
                 clave, valor = parte.split("=", 1)
                 datos_guardado[clave.strip()] = valor.strip()
 
-        # Llamar a n8n directamente desde la API
         try:
             payload = {
                 "fecha":       datetime.datetime.now().strftime("%d/%m/%Y, %I:%M:%S %p"),
@@ -89,11 +87,12 @@ def chatear(session_id: str, mensaje: str) -> dict:
                 "descripcion": datos_guardado.get("Descripción", "No detectada"),
                 "solucion":    datos_guardado.get("Solución",    "Pendiente")
             }
-            httpx.post(WEBHOOK_N8N, json=payload, timeout=10)
-        except Exception:
-            pass
+            print(f"Llamando a n8n con payload: {payload}")
+            respuesta_n8n = httpx.post(WEBHOOK_N8N, json=payload, timeout=10)
+            print(f"Respuesta n8n: {respuesta_n8n.status_code}")
+        except Exception as e:
+            print(f"Error llamando a n8n: {e}")
 
-    # Respuesta amigable al usuario cuando se guarda
     respuesta_usuario = respuesta
     if guardado:
         respuesta_usuario = (
