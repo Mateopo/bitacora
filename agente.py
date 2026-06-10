@@ -1,4 +1,3 @@
-%%writefile agente_peliculas/agente.py
 
 import os
 import httpx
