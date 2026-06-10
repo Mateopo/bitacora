@@ -68,6 +68,10 @@ def obtener_historial(session_id: str) -> RedisChatMessageHistory:
     )
 
 
+import httpx  # agregar este import arriba
+
+WEBHOOK_N8N = "https://mpacheco.app.n8n.cloud/webhook/buscar-película"
+
 def chatear(session_id: str, mensaje: str) -> dict:
     historial_redis = obtener_historial(session_id)
     mensajes_recientes = historial_redis.messages[-VENTANA:]
@@ -81,17 +85,30 @@ def chatear(session_id: str, mensaje: str) -> dict:
     historial_redis.add_user_message(mensaje)
     historial_redis.add_ai_message(respuesta)
 
-    # Detectar si el agente confirmó el guardado
     guardado = False
     datos_guardado = {}
+
     if respuesta.startswith("GUARDADO:"):
         guardado = True
-        # Parsear los datos: GUARDADO:Cliente=X|Caso=Y|Descripción=Z|Solución=W
         partes = respuesta.replace("GUARDADO:", "").split("|")
         for parte in partes:
             if "=" in parte:
                 clave, valor = parte.split("=", 1)
                 datos_guardado[clave.strip()] = valor.strip()
+
+        # ── Llamar a n8n directamente desde la API ──────────
+        try:
+            payload = {
+                "fecha":       __import__('datetime').datetime.now().strftime("%d/%m/%Y, %I:%M:%S %p"),
+                "session_id":  session_id,
+                "cliente":     datos_guardado.get("Cliente",     "No detectado"),
+                "caso":        datos_guardado.get("Caso",        "No detectado"),
+                "descripcion": datos_guardado.get("Descripción", "No detectada"),
+                "solucion":    datos_guardado.get("Solución",    "Pendiente")
+            }
+            httpx.post(WEBHOOK_N8N, json=payload, timeout=10)
+        except Exception:
+            pass  # Si n8n falla, no interrumpe la respuesta al usuario
 
     return {
         "respuesta":           respuesta,
